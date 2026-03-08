@@ -1092,29 +1092,60 @@ function calcMA(arr, n){
    FETCH YAHOO FINANCE
 ═══════════════════════════════════════════════════════ */
 async function fetchYahoo(stockId, days){
-  const sym = encodeURIComponent(stockId + '.TW');
-  const end = Math.floor(Date.now()/1000);
-  const start = end - Math.ceil(days * 1.8) * 86400;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&period1=${start}&period2=${end}&events=div,splits&includeAdjustedClose=true`;
-  const r = await fetch(url, { headers:{ 'User-Agent':'Mozilla/5.0' } });
-  if(!r.ok) throw new Error(`Yahoo Finance 錯誤 (${r.status})，請確認股票代碼`);
-  const j = await r.json();
-  const res = j?.chart?.result?.[0];
-  if(!res) throw new Error('查無此股票代碼，請確認後重試');
-  return res;
+  const sym = stockId + '.TW';
+  const endD = new Date();
+  const startD = new Date();
+  startD.setDate(startD.getDate() - Math.ceil(days * 1.8));
+  const fmt = d => d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+  const url = 'https://stooq.com/q/d/l/?s=' + sym.toLowerCase() + '&d1=' + fmt(startD) + '&d2=' + fmt(endD) + '&i=d';
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('無法取得資料 (' + r.status + ')');
+  const text = await r.text();
+  if(!text || text.includes('No data') || text.trim().split('
+').length < 3)
+    throw new Error('查無此股票代碼，請確認後重試（例如：2330）');
+  const lines = text.trim().split('
+');
+  const rows = [];
+  for(let i=1; i<lines.length; i++){
+    const cols = lines[i].split(',');
+    if(cols.length < 5) continue;
+    const dateStr = cols[0]; const open = cols[1]; const high = cols[2]; const low = cols[3]; const close = cols[4]; const volume = cols[5];
+    if(!dateStr || !close || close==='null') continue;
+    const parts = dateStr.split('-');
+    rows.push({ timestamp: new Date(+parts[0], +parts[1]-1, +parts[2]).getTime()/1000,
+      open:+open, high:+high, low:+low, close:+close, volume:volume?+volume:0 });
+  }
+  if(rows.length === 0) throw new Error('查無股價資料，請確認代碼是否正確');
+  return {
+    timestamp: rows.map(r=>r.timestamp),
+    indicators: {
+      quote: [{ open:rows.map(r=>r.open), high:rows.map(r=>r.high), low:rows.map(r=>r.low), close:rows.map(r=>r.close), volume:rows.map(r=>r.volume) }],
+      adjclose: [{ adjclose: rows.map(r=>r.close) }]
+    },
+    meta: { longName: STOCK_NAMES[stockId] || stockId }
+  };
 }
 
 /* ═══════════════════════════════════════════════════════
    FETCH FINMIND (法人籌碼)
 ═══════════════════════════════════════════════════════ */
 async function fetchFinMind(dataset, stockId, startDate){
-  const url = `https://api.finmindtrade.com/api/v4/data?dataset=${dataset}&data_id=${stockId}&start_date=${startDate}&token=`;
-  try {
-    const r = await fetch(url);
-    if(!r.ok) return [];
-    const j = await r.json();
-    return j.data || [];
-  } catch { return []; }
+  const target = `https://api.finmindtrade.com/api/v4/data?dataset=${dataset}&data_id=${stockId}&start_date=${startDate}&token=`;
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(target)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
+    target,
+  ];
+  for(const url of proxies){
+    try {
+      const r = await fetch(url);
+      if(!r.ok) continue;
+      const j = await r.json();
+      if(j.data) return j.data;
+    } catch { continue; }
+  }
+  return [];
 }
 
 /* ═══════════════════════════════════════════════════════
