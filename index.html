@@ -840,7 +840,7 @@ body::before {
     <div class="sb-section-title">🔑 AI 設定</div>
     <div class="form-row">
       <label class="form-label">Gemini API Key</label>
-      <input type="password" class="form-input" id="apiKey" placeholder="貼上 API Key">
+      <input type="password" class="form-input" id="apiKey" placeholder="必填：貼上 Gemini API Key">
     </div>
   </div>
 
@@ -920,7 +920,7 @@ body::before {
         <p>🤖 <strong>AI 報告係依據歷史數據與技術指標進行解讀，AI 內容可能出錯</strong>，使用者應自行判斷並查證。</p>
         <strong class="note">💰 投資有風險，請自行評估並自負盈虧</strong>
       </div>
-      <div class="welcome-hint">👈 請在左側輸入股票代碼與 API Key 後開始分析</div>
+      <div class="welcome-hint">👈 請輸入 Gemini API Key + 股票代碼後開始分析<br><span style="font-size:11px;color:#3d5469;">⚠️ API Key 為必填，用於取得股價數據與 AI 分析</span></div>
     </div>
   </div>
 
@@ -1092,36 +1092,73 @@ function calcMA(arr, n){
    FETCH YAHOO FINANCE
 ═══════════════════════════════════════════════════════ */
 async function fetchYahoo(stockId, days){
-  const sym = stockId + '.TW';
-  const endD = new Date();
-  const startD = new Date();
-  startD.setDate(startD.getDate() - Math.ceil(days * 1.8));
-  const fmt = d => d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
-  const url = 'https://stooq.com/q/d/l/?s=' + sym.toLowerCase() + '&d1=' + fmt(startD) + '&d2=' + fmt(endD) + '&i=d';
-  const r = await fetch(url);
-  if(!r.ok) throw new Error('無法取得資料 (' + r.status + ')');
-  const text = await r.text();
-  if(!text || text.includes('No data') || text.trim().split('
-').length < 3)
-    throw new Error('查無此股票代碼，請確認後重試（例如：2330）');
-  const lines = text.trim().split('
-');
-  const rows = [];
-  for(let i=1; i<lines.length; i++){
-    const cols = lines[i].split(',');
-    if(cols.length < 5) continue;
-    const dateStr = cols[0]; const open = cols[1]; const high = cols[2]; const low = cols[3]; const close = cols[4]; const volume = cols[5];
-    if(!dateStr || !close || close==='null') continue;
-    const parts = dateStr.split('-');
-    rows.push({ timestamp: new Date(+parts[0], +parts[1]-1, +parts[2]).getTime()/1000,
-      open:+open, high:+high, low:+low, close:+close, volume:volume?+volume:0 });
+  // Use Gemini API with Google Search grounding to get stock price data
+  // This is the only reliable method that works in Safari without CORS issues
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if(!apiKey) throw new Error('請先輸入 Gemini API Key 才能取得股票資料');
+
+  const stockName = STOCK_NAMES[stockId] || stockId;
+  const today = new Date();
+  const startD = new Date(); startD.setDate(today.getDate() - Math.ceil(days*1.5));
+  const todayStr = today.toISOString().slice(0,10);
+  const startStr = startD.toISOString().slice(0,10);
+
+  setLoading('正在透過 Gemini 取得即時股價數據...', '請稍候，約需 15-30 秒');
+
+  const prompt = `請取得台股「${stockId} ${stockName}」從 ${startStr} 到 ${todayStr} 的每日K線數據。
+
+請以下列 JSON 格式回傳，不要有任何其他文字，只回傳純 JSON：
+{
+  "stockId": "${stockId}",
+  "stockName": "${stockName}",
+  "data": [
+    {"date":"YYYY-MM-DD","open":數字,"high":數字,"low":數字,"close":數字,"volume":數字(張)},
+    ...
+  ]
+}
+
+要求：
+- 只回傳 JSON，不要 markdown 符號或說明文字
+- 日期格式 YYYY-MM-DD，依日期升序排列
+- volume 單位是張（千股）
+- 數字都是純數字不要逗號
+- 只取最近 ${days} 個交易日`;
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      contents: [{parts:[{text: prompt}]}],
+      tools: [{type:'google_search'}],
+      generationConfig: { temperature:0.1, maxOutputTokens:8192 }
+    })
+  });
+  if(!res.ok) {
+    const e = await res.json().catch(()=>({}));
+    throw new Error('Gemini API 錯誤：' + (e?.error?.message || res.status));
   }
-  if(rows.length === 0) throw new Error('查無股價資料，請確認代碼是否正確');
+  const j = await res.json();
+  const text = j?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  
+  // Parse JSON from response
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if(!jsonMatch) throw new Error('Gemini 無法取得股價資料，請確認股票代碼正確');
+  
+  let parsed;
+  try { parsed = JSON.parse(jsonMatch[0]); }
+  catch { throw new Error('股價資料解析失敗，請重試'); }
+  
+  const rows = (parsed.data || []).filter(r => r.close > 0);
+  if(rows.length < 5) throw new Error('取得的股價資料不足，請重試');
+
   return {
-    timestamp: rows.map(r=>r.timestamp),
+    timestamp: rows.map(r => new Date(r.date).getTime()/1000),
     indicators: {
-      quote: [{ open:rows.map(r=>r.open), high:rows.map(r=>r.high), low:rows.map(r=>r.low), close:rows.map(r=>r.close), volume:rows.map(r=>r.volume) }],
-      adjclose: [{ adjclose: rows.map(r=>r.close) }]
+      quote: [{ open:rows.map(r=>+r.open), high:rows.map(r=>+r.high),
+                low:rows.map(r=>+r.low), close:rows.map(r=>+r.close),
+                volume:rows.map(r=>+r.volume) }],
+      adjclose: [{ adjclose: rows.map(r=>+r.close) }]
     },
     meta: { longName: STOCK_NAMES[stockId] || stockId }
   };
