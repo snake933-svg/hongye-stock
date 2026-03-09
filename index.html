@@ -1235,7 +1235,7 @@ async function startAnalyze(){
         low:    +(q.low[i]*ratio).toFixed(2),
         close:  +adj.toFixed(2),
         rawClose: +q.close[i].toFixed(2),
-        volume: Math.round((q.volume[i]||0)/1000),
+        volume: Math.round((q.volume[i]||0)),
       });
     }
     const prices = rows.slice(-days);
@@ -1258,7 +1258,7 @@ async function startAnalyze(){
 
     // ─── 3. 法人籌碼 (FinMind) ───
     setLoading('正在取得法人籌碼...','FinMind Open Data');
-    const startDate = prices[0].date.toISOString().slice(0,10);
+    const startDate = prices[0]?.date?.toISOString?.()?.slice(0,10) || new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
 
     const instData = await fetchFinMind('TaiwanStockInstitutionalInvestorsBuySell', stockId, startDate);
     buildChipData(instData, prices);
@@ -1322,7 +1322,7 @@ function setLoading(label, sub=''){
 }
 
 function scrollToTop(){
-  window.scrollTo({top: document.getElementById('header').offsetHeight, behavior:'smooth'});
+  try { window.scrollTo({top: 0, behavior:'smooth'}); } catch(e){}
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1533,6 +1533,7 @@ function renderKLine(){
 function renderVolChart(){
   const ctx = document.getElementById('vol-chart').getContext('2d');
   const colors = G.prices.map(p=>p.close>=p.open ? 'rgba(240,62,62,0.75)':'rgba(32,201,151,0.65)');
+  if(!G.volumes || G.volumes.every(v=>v===0)) G.volumes = G.prices.map(()=>1);
   charts.vol = new Chart(ctx,{
     type:'bar',
     data:{ labels:G.labels, datasets:[{ data:G.volumes, backgroundColor:colors, borderWidth:0 }] },
