@@ -1331,11 +1331,11 @@ function buildChipData(instData, prices){
     if(!d) continue;
     if(!dateMap[d]) dateMap[d] = { foreign:0, trust:0, dealer:0 };
     const net = (row.buy||0) - (row.sell||0);
-    const張 = net/1000;
+    const netShares = net/1000;
     const n = (row.name||'').toLowerCase();
-    if(n.includes('foreign') || n.includes('外資')) dateMap[d].foreign += 張;
-    else if(n.includes('investment') || n.includes('trust') || n.includes('投信')) dateMap[d].trust += 張;
-    else if(n.includes('dealer') || n.includes('自營')) dateMap[d].dealer += 張;
+    if(n.includes('foreign') || n.includes('外資')) dateMap[d].foreign += netShares;
+    else if(n.includes('investment') || n.includes('trust') || n.includes('投信')) dateMap[d].trust += netShares;
+    else if(n.includes('dealer') || n.includes('自營')) dateMap[d].dealer += netShares;
   }
   G.foreignNet = prices.map(p => dateMap[fmtDate(p.date)]?.foreign ?? null);
   G.trustNet   = prices.map(p => dateMap[fmtDate(p.date)]?.trust   ?? null);
