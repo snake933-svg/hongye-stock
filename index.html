@@ -226,6 +226,71 @@ body{font-family:'Noto Sans TC',sans-serif;background:#0e1117;color:#fff;display
 /* 欄位名稱 — 橙色 */
 .hl-field { color:#FF8C42; font-weight:800; }
 
+
+/* ── 朗讀控制列 ── */
+#tts-bar {
+  display: none;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  background: linear-gradient(135deg, #0d1828, #0e1530);
+  border: 1px solid #4dabf7;
+  border-radius: 50px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 24px rgba(77,171,247,0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  min-width: 280px;
+}
+#tts-bar.hidden { display: none !important; }
+.tts-btn {
+  border: none; border-radius: 50%;
+  width: 40px; height: 40px;
+  cursor: pointer; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .2s;
+  flex-shrink: 0;
+}
+#tts-play  { background: #4dabf7; color: #000; }
+#tts-pause { background: #ffd700; color: #000; }
+#tts-stop  { background: rgba(255,68,68,0.2); color: #ff4444; border:1px solid rgba(255,68,68,0.4); }
+.tts-btn:hover { transform: scale(1.1); }
+#tts-progress-wrap {
+  flex: 1; background: rgba(255,255,255,0.1);
+  border-radius: 4px; height: 6px; overflow: hidden;
+}
+#tts-progress {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #4dabf7, #ffd700);
+  border-radius: 4px; transition: width .3s;
+}
+#tts-label {
+  font-size: 11px; color: #4dabf7;
+  font-family: monospace; white-space: nowrap;
+  min-width: 80px; text-align: right;
+}
+/* 朗讀觸發按鈕（固定在右下角）*/
+#tts-trigger {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  z-index: 499;
+  width: 54px; height: 54px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #1565c0, #0d47a1);
+  border: 2px solid #4dabf7;
+  color: #fff; font-size: 22px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(77,171,247,0.4);
+  display: flex; align-items: center; justify-content: center;
+  transition: all .2s;
+}
+#tts-trigger:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(77,171,247,0.6); }
 </style>
 </head>
 <body>
@@ -309,6 +374,22 @@ body{font-family:'Noto Sans TC',sans-serif;background:#0e1117;color:#fff;display
   </div>
 
   <div class="sb-footer">
+  <!-- 朗讀按鈕 -->
+  <div style="margin-bottom:12px;">
+    <button id="btn-tts" onclick="toggleTTS()"
+      style="width:100%;padding:11px;background:linear-gradient(135deg,#1565c0,#0d47a1);
+             border:none;border-radius:8px;color:#fff;font-family:'Noto Sans TC',sans-serif;
+             font-size:14px;font-weight:700;cursor:pointer;letter-spacing:1px;
+             box-shadow:0 4px 15px rgba(21,101,192,.4);display:flex;align-items:center;
+             justify-content:center;gap:8px;transition:all .2s;">
+      <span id="tts-icon">🔊</span>
+      <span id="tts-label">朗讀整頁報告</span>
+    </button>
+    <div id="tts-progress" style="display:none;margin-top:6px;font-size:10px;color:#4dabf7;
+         text-align:center;line-height:1.5;padding:4px 8px;background:rgba(77,171,247,.08);
+         border-radius:4px;"></div>
+  </div>
+
     <a class="yt-link" href="https://www.youtube.com/@宏爺講股" target="_blank">📺 宏爺講股 YouTube頻道</a>
     <p class="sb-warning">⚠️ 僅為教育學術研究使用<br>非投資與買賣建議<br>投資有風險，盈虧自負</p>
   </div>
@@ -2043,10 +2124,191 @@ function renderAILoading(){
      </div>`;
 }
 
+/* ════════════════════════════════════════
+   朗讀整頁功能（Web Speech API）
+   朗讀順序：股票資訊 → K線圖摘要 → 籌碼 → 月季營收 → AI報告
+════════════════════════════════════════ */
+let ttsActive = false;
+let ttsUtter  = null;
+let ttsQueue  = [];
+let ttsIdx    = 0;
 
-</script>
-</body>
-</html>
+function toggleTTS(){
+  if(ttsActive){
+    stopTTS();
+  } else {
+    startTTS();
+  }
+}
+
+function stopTTS(){
+  window.speechSynthesis.cancel();
+  ttsActive = false;
+  ttsQueue  = [];
+  ttsIdx    = 0;
+  document.getElementById('tts-icon').textContent  = '🔊';
+  document.getElementById('tts-label').textContent = '朗讀整頁報告';
+  document.getElementById('tts-progress').style.display = 'none';
+}
+
+function startTTS(){
+  // 確認有內容可讀
+  const resultVisible = document.getElementById('result-screen')?.style.display !== 'none';
+  if(!resultVisible){
+    alert('請先完成股票分析再使用朗讀功能');
+    return;
+  }
+
+  ttsActive = true;
+  ttsQueue  = buildTTSQueue();
+  ttsIdx    = 0;
+  document.getElementById('tts-icon').textContent  = '⏹';
+  document.getElementById('tts-label').textContent = '停止朗讀';
+  document.getElementById('tts-progress').style.display = 'block';
+  speakNext();
+}
+
+function buildTTSQueue(){
+  const queue = [];
+
+  // ── 1. 股票基本資訊 ──
+  const title = document.getElementById('result-title')?.innerText || '';
+  const info  = document.getElementById('info-bar')?.innerText  || '';
+  if(title) queue.push({ text: title, label: '📊 股票資訊' });
+  if(info)  queue.push({ text: info,  label: '📊 股票資訊' });
+
+  // ── 2. K線圖摘要（從數據生成文字描述）──
+  if(G.prices && G.prices.length > 0){
+    const kText = buildKLineSummary();
+    if(kText) queue.push({ text: kText, label: '📈 K線走勢摘要' });
+  }
+
+  // ── 3. 法人籌碼卡片 ──
+  const chip = document.getElementById('chip-grid')?.innerText || '';
+  if(chip.trim()) queue.push({ text: '法人籌碼數據：' + chip.replace(/\n+/g,'，'), label: '💼 法人籌碼' });
+
+  // ── 4. 月營收摘要 ──
+  const rev = document.getElementById('revenue-info')?.innerText || '';
+  if(rev.trim()) queue.push({ text: '月營收：' + rev, label: '📅 月營收' });
+
+  // ── 5. 季營收摘要 ──
+  const qrev = document.getElementById('quarterly-info')?.innerText || '';
+  if(qrev.trim()) queue.push({ text: '季營收：' + qrev, label: '📋 季營收' });
+
+  // ── 6. AI報告（逐段讀取）──
+  const aiBody = document.getElementById('ai-report-body');
+  if(aiBody){
+    // 取純文字，移除 HTML 標籤
+    const aiText = aiBody.innerText || '';
+    if(aiText.trim()){
+      // 按章節分段
+      const sections = aiText.split(/(?=第[一二三四五六七]章)/).filter(s=>s.trim());
+      for(const sec of sections){
+        const firstLine = sec.split('\n')[0].trim();
+        const label = firstLine.length < 30 ? firstLine : 'AI 報告';
+        // 每段最多 500 字，避免單段太長
+        const chunks = chunkText(sec, 500);
+        for(const chunk of chunks){
+          if(chunk.trim()) queue.push({ text: chunk, label });
+        }
+      }
+    }
+  }
+
+  return queue;
+}
+
+function buildKLineSummary(){
+  if(!G.prices || G.prices.length < 2) return '';
+  const n     = G.prices.length;
+  const last  = G.prices[n-1];
+  const prev  = G.prices[n-2];
+  const chg   = (last.close - prev.close).toFixed(2);
+  const chgP  = ((last.close - prev.close)/prev.close*100).toFixed(2);
+  const dir   = chg >= 0 ? '上漲' : '下跌';
+
+  // K線型態（最近3日）
+  const recent3 = G.prices.slice(-3).map(p => classifyKBar(p)).join(' → ');
+
+  // 趨勢判斷
+  const ma20  = G.ma20[n-1]?.toFixed(2)  || '未知';
+  const ma100 = G.ma100[n-1]?.toFixed(2) || '未知';
+  let trend = '盤整';
+  if(last.close > +ma20 && last.close > +ma100) trend = '多頭格局';
+  else if(last.close < +ma20 && last.close < +ma100) trend = '空頭格局';
+  else if(last.close > +ma100 && last.close < +ma20) trend = '多箱整理';
+  else if(last.close < +ma100 && last.close > +ma20) trend = '空箱整理';
+
+  // 最高最低
+  const highs = G.prices.map(p=>p.high);
+  const lows  = G.prices.map(p=>p.low);
+  const period_high = Math.max(...highs).toFixed(2);
+  const period_low  = Math.min(...lows).toFixed(2);
+
+  return `K線走勢摘要：${G.stockName || G.stockId}，` +
+    `最新收盤價 ${last.close} 元，` +
+    `較前日${dir} ${Math.abs(chg)} 元，漲跌幅 ${chgP} 百分比，` +
+    `成交量 ${last.volume.toLocaleString()} 張。` +
+    `近期K線型態為：${recent3}。` +
+    `目前均線結構：短期趨勢線 MA20 位於 ${ma20} 元，中期趨勢線 MA100 位於 ${ma100} 元，` +
+    `整體趨勢判斷為${trend}。` +
+    `分析期間最高價 ${period_high} 元，最低價 ${period_low} 元。`;
+}
+
+function chunkText(text, maxLen){
+  const result = [];
+  let current  = '';
+  const sentences = text.split(/(?<=[。！？\.!?])/);
+  for(const s of sentences){
+    if((current + s).length > maxLen && current){
+      result.push(current);
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if(current.trim()) result.push(current);
+  return result;
+}
+
+function speakNext(){
+  if(!ttsActive || ttsIdx >= ttsQueue.length){
+    stopTTS();
+    return;
+  }
+  const item = ttsQueue[ttsIdx];
+  const prog = document.getElementById('tts-progress');
+  if(prog){
+    prog.textContent = `${item.label}（${ttsIdx+1} / ${ttsQueue.length}）`;
+  }
+
+  const utt = new SpeechSynthesisUtterance(item.text);
+  utt.lang  = 'zh-TW';
+  utt.rate  = 1.0;   // 語速（0.5~2）
+  utt.pitch = 1.0;   // 音調
+  utt.volume = 1.0;  // 音量
+
+  // 優先選擇中文語音
+  const voices = window.speechSynthesis.getVoices();
+  const zhVoice = voices.find(v => v.lang === 'zh-TW') ||
+                  voices.find(v => v.lang.startsWith('zh'));
+  if(zhVoice) utt.voice = zhVoice;
+
+  utt.onend   = () => { ttsIdx++; speakNext(); };
+  utt.onerror = () => { ttsIdx++; speakNext(); };
+
+  ttsUtter = utt;
+  window.speechSynthesis.speak(utt);
+}
+
+// iOS Safari 需要在 visibilitychange 時重啟（Safari 背景會暫停）
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden && ttsActive){
+    window.speechSynthesis.pause();
+  } else if(!document.hidden && ttsActive){
+    window.speechSynthesis.resume();
+  }
+});
 
 </script>
 </body>
